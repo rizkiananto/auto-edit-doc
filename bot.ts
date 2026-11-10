@@ -3,6 +3,7 @@
 // env: BOT_TOKEN, DOC_ID, ALLOWED_IDS (comma-separated Telegram user ids)
 import { Bot, InputFile } from "grammy";
 import { google } from "googleapis";
+import { readFileSync } from "node:fs";
 
 const bot = new Bot(process.env.BOT_TOKEN!);
 let DOC_ID = process.env.DOC_ID!;
@@ -19,41 +20,30 @@ const auth = new google.auth.GoogleAuth({
 const docs = google.docs({ version: "v1", auth });
 const drive = google.drive({ version: "v3", auth });
 
-// ---------- vocabulary ----------
+// ---------- vocabulary (loaded from config.json) ----------
+// Edit config.json to match your own doc labels, words and table layout.
+// Set CONFIG_PATH to use a different file.
+const cfg = JSON.parse(readFileSync(process.env.CONFIG_PATH ?? "config.json", "utf8"));
+for (const k of ["fields", "commands", "table", "columnWords", "date", "locale"])
+  if (!(k in cfg)) throw new Error(`config.json: missing "${k}"`);
+
 // canonical field -> label as written in the doc
-const LABELS: Record<string, string> = {
-  no: "No",
-  from: "From",
-  to: "To",
-  company: "Company",
-  phone: "Phone",
-  email: "Email",
-  "your reff": "Your Reff",
-  "payment terms": "Payment Terms",
-  "delivery terms": "Delivery Terms",
-  "price terms": "Price", // the "Price : Nett, Franco..." line in Term of Quotation
-};
+const LABELS: Record<string, string> = Object.fromEntries(
+  Object.entries<any>(cfg.fields).map(([k, v]) => [k, v.label])
+);
 
-// words people may type -> canonical name
-const ALIASES: Record<string, string> = {
-  no: "no", nomor: "no",
-  from: "from", dari: "from",
-  to: "to", kepada: "to", yth: "to",
-  company: "company", perusahaan: "company",
-  phone: "phone", telp: "phone", hp: "phone",
-  email: "email",
-  "your reff": "your reff", reff: "your reff",
-  "payment terms": "payment terms", "payment term": "payment terms", pembayaran: "payment terms",
-  "delivery terms": "delivery terms", delivery: "delivery terms", pengiriman: "delivery terms",
-  "price terms": "price terms",
-  add: "add", tambah: "add",
-  delete: "delete", hapus: "delete", remove: "delete",
-  price: "price", harga: "price",
-  qty: "qty", jumlah: "qty",
-  total: "total",
-};
+// words people may type -> canonical name (a field's own key always counts)
+const ALIASES: Record<string, string> = {};
+for (const [k, v] of Object.entries<any>(cfg.fields))
+  for (const w of [k, ...v.aliases]) ALIASES[w.toLowerCase()] = k;
+for (const [k, words] of Object.entries<string[]>(cfg.commands))
+  for (const w of words) ALIASES[w.toLowerCase()] = k;
 
-const COLUMNS: Record<string, number> = { nama: 1, name: 1, qty: 2, jumlah: 2, harga: 3, price: 3 };
+// table column positions (0-based) and the words that pick a column in the guided flow
+const T: Record<string, number> = cfg.table;
+const COLUMNS: Record<string, number> = {};
+for (const [col, words] of Object.entries<string[]>(cfg.columnWords))
+  for (const w of words) COLUMNS[w.toLowerCase()] = T[col];
 
 // e.g. "Jakarta, 22 Mei 2026"
 const DATE_RE = /^[A-Za-zÀ-ÿ .]+,\s*\d{1,2}\s+[A-Za-z]+\s+\d{4}$/;
@@ -63,19 +53,16 @@ type Edit = { start: number; end: number; text: string };
 // Auto-set the date line to today on every change (set AUTO_DATE=off to disable).
 // If the user sends their own date line, theirs wins.
 const AUTO_DATE = process.env.AUTO_DATE !== "off";
-const MONTHS = [
-  "Januari", "Februari", "Maret", "April", "Mei", "Juni",
-  "Juli", "Agustus", "September", "Oktober", "November", "Desember",
-];
+const MONTHS: string[] = cfg.date.months;
 function todayLine() {
   const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Jakarta",
+    timeZone: cfg.date.timezone,
     day: "2-digit",
     month: "numeric",
     year: "numeric",
   }).formatToParts(new Date());
   const get = (t: string) => parts.find((p) => p.type === t)!.value;
-  return `Jakarta, ${get("day")} ${MONTHS[+get("month") - 1]} ${get("year")}`;
+  return `${cfg.date.city}, ${get("day")} ${MONTHS[+get("month") - 1]} ${get("year")}`;
 }
 
 // "2m3", "2M3", "2 m3", "2" -> "2m³"
@@ -104,7 +91,7 @@ const itemsTable = (doc: any) =>
 const itemRows = (doc: any) =>
   itemsTable(doc)
     .slice(1, -1)
-    .map((r, i) => ({ row: i + 1, name: cellText(r.tableCells[1]) }));
+    .map((r, i) => ({ row: i + 1, name: cellText(r.tableCells[T.name]) }));
 
 // Highest index first so earlier indexes stay valid.
 // Insert first, then delete old text, so new text inherits formatting.
@@ -130,19 +117,19 @@ const validPrice = (s: string) =>
   /\d/.test(s) && !/[a-z]/i.test(s.replace(/^\s*rp\.?\s*/i, "")) && num(s) > 0;
 const qtyNum = (s: string) =>
   parseFloat((s.match(/^\s*(\d+(?:[.,]\d+)?)/)?.[1] ?? "0").replace(",", "."));
-const idr = (n: number) => n.toLocaleString("id-ID");
+const idr = (n: number) => n.toLocaleString(cfg.locale);
 
 async function recalc() {
   const rows = itemsTable(await getDoc());
   const edits: Edit[] = [];
   let grand = 0;
   rows.slice(1, -1).forEach((r, i) => {
-    const total = qtyNum(cellText(r.tableCells[2])) * num(cellText(r.tableCells[3]));
+    const total = qtyNum(cellText(r.tableCells[T.qty])) * num(cellText(r.tableCells[T.price]));
     grand += total;
-    edits.push({ ...cellRange(r.tableCells[4]), text: idr(total) });
-    edits.push({ ...cellRange(r.tableCells[0]), text: `${i + 1}.` }); // renumber
+    edits.push({ ...cellRange(r.tableCells[T.total]), text: idr(total) });
+    edits.push({ ...cellRange(r.tableCells[T.no]), text: `${i + 1}.` }); // renumber
   });
-  edits.push({ ...cellRange(rows[rows.length - 1].tableCells[4]), text: idr(grand) });
+  edits.push({ ...cellRange(rows[rows.length - 1].tableCells[T.total]), text: idr(grand) });
   await applyEdits(edits);
 }
 
@@ -268,9 +255,9 @@ async function addRows(adds: { name: string; price: string; qty?: string }[]) {
   const edits: Edit[] = adds.flatMap((a, i) => {
     const cells = rows[last + 1 + i].tableCells;
     return [
-      { ...cellRange(cells[1]), text: a.name },
-      { ...cellRange(cells[2]), text: a.qty ?? "1m³" },
-      { ...cellRange(cells[3]), text: idr(num(a.price)) },
+      { ...cellRange(cells[T.name]), text: a.name },
+      { ...cellRange(cells[T.qty]), text: a.qty ?? "1m³" },
+      { ...cellRange(cells[T.price]), text: idr(num(a.price)) },
     ];
   });
   await applyEdits(edits);
@@ -346,14 +333,14 @@ async function applyMessage(text: string): Promise<string> {
     if (it.price && !validPrice(it.price)) {
       fail.push(`${target.name}: harga "${it.price}" tidak valid`);
     } else if (it.price) {
-      edits.push({ ...cellRange(cells[3]), text: idr(num(it.price)) });
+      edits.push({ ...cellRange(cells[T.price]), text: idr(num(it.price)) });
       ok.push(`${target.name}: harga → ${idr(num(it.price))}`);
     }
     if (it.qty && !/^\d/.test(it.qty.trim())) {
       fail.push(`${target.name}: qty "${it.qty}" tidak valid`);
     } else if (it.qty) {
       const q = normQty(it.qty);
-      edits.push({ ...cellRange(cells[2]), text: q });
+      edits.push({ ...cellRange(cells[T.qty]), text: q });
       ok.push(`${target.name}: qty → ${q}`);
     }
     needRecalc = true;
@@ -454,7 +441,7 @@ bot.on("message:text", async (ctx) => {
     const col = COLUMNS[text.toLowerCase()];
     if (!col) return ctx.reply("Balas dengan: nama, qty, atau harga");
     state.set(id, { step: "item_value", row: s.row, col, label: text.toLowerCase() });
-    const hint = col === 2 ? ' (contoh: 2m³)' : col === 3 ? " (contoh: 570.000)" : "";
+    const hint = col === T.qty ? ' (contoh: 2m³)' : col === T.price ? " (contoh: 570.000)" : "";
     return ctx.reply(`${text.toLowerCase()} barunya?${hint}`);
   }
 
@@ -464,21 +451,21 @@ bot.on("message:text", async (ctx) => {
   }
 
   if (s.step === "item_value") {
-    if (s.col === 3 && !validPrice(text))
+    if (s.col === T.price && !validPrice(text))
       return ctx.reply('Harga tidak valid, contoh: 570.000. Coba lagi atau /batal.');
-    if (s.col === 2 && !/^\d/.test(text))
+    if (s.col === T.qty && !/^\d/.test(text))
       return ctx.reply('Qty tidak valid, contoh: 2m³. Coba lagi atau /batal.');
     state.delete(id);
     const doc = await getDoc();
     const cell = itemsTable(doc)[s.row].tableCells[s.col];
-    const value = s.col === 3 ? idr(num(text)) : s.col === 2 ? normQty(text) : text;
+    const value = s.col === T.price ? idr(num(text)) : s.col === T.qty ? normQty(text) : text;
     const edits: Edit[] = [{ ...cellRange(cell), text: value }];
     if (AUTO_DATE) {
       const d = dateEdit(doc, todayLine());
       if (d) edits.push(d);
     }
     await applyEdits(edits);
-    if (s.col === 2 || s.col === 3) await recalc();
+    if (s.col === T.qty || s.col === T.price) await recalc();
     return ctx.reply("✅ Selesai, total dihitung ulang. Ketik /pdf untuk ambil PDF-nya.");
   }
 });

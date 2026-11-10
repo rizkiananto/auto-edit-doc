@@ -63,6 +63,23 @@ Put your service account key at `./service-account.json`. Both `.env` and `servi
 2. Share the copy with the same `client_email` as Editor.
 3. Take its ID from the URL and set it as `TEST_DOC_ID` in `.env`.
 
+## Customising for your own doc
+
+The labels and layout the bot looks for live in `config.json`, not in the code. Edit it to match your document:
+
+| Key           | What it controls |
+| ------------- | ---------------- |
+| `fields`      | Header lines in the doc, e.g. `To : ...`. `label` is the text in your doc; `aliases` are extra words people can type. The key itself (e.g. `to`) always works too. Add, remove or rename entries freely. |
+| `commands`    | Words for add / delete / price / qty / total (e.g. `tambah`, `hapus`). |
+| `table`       | 0-based column positions in the items table: `no`, `name`, `qty`, `price`, `total`. |
+| `columnWords` | Words that pick a column in the guided `edit` flow. |
+| `date`        | City, timezone and month names for the auto date line (`Jakarta, 22 Mei 2026`). |
+| `locale`      | Number format for prices (`id-ID` gives `480.000`). |
+
+**Tip:** you can give `config.json` and the text of your doc to any AI assistant and ask it to adjust the config to match your doc's labels and table layout. Remove or replace private details (names, phone numbers, prices) before pasting.
+
+Use `CONFIG_PATH=/path/to/file.json` to load a different file. The bot's reply text (Indonesian) is still in `bot.ts`.
+
 ## Run
 
 ```bash
