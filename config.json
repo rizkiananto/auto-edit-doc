@@ -29,5 +29,9 @@
     "timezone": "Asia/Jakarta",
     "months": ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"]
   },
+  "unit": {
+    "default": "m³",
+    "aliases": { "m3": "m³", "m³": "m³" }
+  },
   "locale": "id-ID"
 }

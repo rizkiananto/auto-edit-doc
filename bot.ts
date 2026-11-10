@@ -24,7 +24,7 @@ const drive = google.drive({ version: "v3", auth });
 // Edit config.json to match your own doc labels, words and table layout.
 // Set CONFIG_PATH to use a different file.
 const cfg = JSON.parse(readFileSync(process.env.CONFIG_PATH ?? "config.json", "utf8"));
-for (const k of ["fields", "commands", "table", "columnWords", "date", "locale"])
+for (const k of ["fields", "commands", "table", "columnWords", "date", "unit", "locale"])
   if (!(k in cfg)) throw new Error(`config.json: missing "${k}"`);
 
 // canonical field -> label as written in the doc
@@ -65,11 +65,19 @@ function todayLine() {
   return `${cfg.date.city}, ${get("day")} ${MONTHS[+get("month") - 1]} ${get("year")}`;
 }
 
-// "2m3", "2M3", "2 m3", "2" -> "2m³"
+// Unit handling comes from config.json ("unit"):
+//   bare "2" -> "2" + default unit; "2 m3" -> "2m³" via aliases; "10pcs", "2 m2" stay as typed.
+const UNIT_DEFAULT: string = cfg.unit.default;
+const UNIT_ALIASES: Record<string, string> = Object.fromEntries(
+  Object.entries<string>(cfg.unit.aliases).map(([k, v]) => [k.toLowerCase(), v])
+);
 function normQty(s: string) {
   const t = s.trim();
-  if (/^\d+(?:[.,]\d+)?$/.test(t)) return `${t}m³`;
-  return t.replace(/\s*m\s*\^?\s*3\b/i, "m³");
+  const m = t.match(/^(\d+(?:[.,]\d+)*)\s*(.*)$/);
+  if (!m) return t;
+  if (!m[2]) return m[1] + UNIT_DEFAULT;
+  const alias = UNIT_ALIASES[m[2].toLowerCase().replace(/[\s^]/g, "")];
+  return alias ? m[1] + alias : t;
 }
 
 // ---------- doc helpers ----------
@@ -115,8 +123,12 @@ const num = (s: string) =>
 // accepts "480.000", "Rp 480.000", "Rp. 480.000,-"; rejects "480rb", "abc", "0"
 const validPrice = (s: string) =>
   /\d/.test(s) && !/[a-z]/i.test(s.replace(/^\s*rp\.?\s*/i, "")) && num(s) > 0;
-const qtyNum = (s: string) =>
-  parseFloat((s.match(/^\s*(\d+(?:[.,]\d+)?)/)?.[1] ?? "0").replace(",", "."));
+// "2" -> 2, "1,5" -> 1.5, "1.5" -> 1.5, "1.000" -> 1000 (dot + exactly 3 digits = thousands, like prices)
+const qtyNum = (s: string) => {
+  const t = s.match(/^\s*(\d+(?:[.,]\d+)*)/)?.[1] ?? "0";
+  const n = /^[1-9]\d{0,2}(\.\d{3})+(,\d+)?$/.test(t) ? t.replace(/\./g, "") : t;
+  return parseFloat(n.replace(",", ".")) || 0;
+};
 const idr = (n: number) => n.toLocaleString(cfg.locale);
 
 async function recalc() {
@@ -256,7 +268,7 @@ async function addRows(adds: { name: string; price: string; qty?: string }[]) {
     const cells = rows[last + 1 + i].tableCells;
     return [
       { ...cellRange(cells[T.name]), text: a.name },
-      { ...cellRange(cells[T.qty]), text: a.qty ?? "1m³" },
+      { ...cellRange(cells[T.qty]), text: a.qty ?? `1${UNIT_DEFAULT}` },
       { ...cellRange(cells[T.price]), text: idr(num(a.price)) },
     ];
   });
@@ -308,7 +320,7 @@ async function applyMessage(text: string): Promise<string> {
       else {
         const q = it.qty ? normQty(it.qty) : undefined;
         adds.push({ name: it.name!, price: it.price, qty: q });
-        ok.push(`Tambah: ${it.name} (${q ?? "1m³"}, ${idr(num(it.price))})`);
+        ok.push(`Tambah: ${it.name} (${q ?? `1${UNIT_DEFAULT}`}, ${idr(num(it.price))})`);
       }
       continue;
     }
@@ -396,8 +408,8 @@ bot.command("pdf", async (ctx) => {
 bot.command("start", (ctx) =>
   ctx.reply(
     'Halo! Ketik "edit" untuk mulai, atau langsung tempel pesan perubahan, contoh:\n\n' +
-    "To : Budi Santoso\nCompany : PT Maju Jaya\n\nPasir Galunggung 02\nPrice : 560.000\n\nJakarta, 10 April 2026\n\n" +
-    "Item baru:\nTambah : Batu Kali\nQty : 2m³\nPrice : 400.000\n\nHapus item:\nHapus : Batu Splir\n\n" +
+    "To : Budi Santoso\nCompany : PT Maju Jaya\n\nPasir Galunggung 02\nPrice : 500.000\n\nJakarta, 10 April 2026\n\n" +
+    "Item baru:\nTambah : Batu Kali\nQty : 2m³\nPrice : 300.000\n\nHapus item:\nHapus : Batu Splir\n\n" +
     "/pdf untuk ambil PDF, /batal untuk membatalkan."
   )
 );
@@ -441,7 +453,7 @@ bot.on("message:text", async (ctx) => {
     const col = COLUMNS[text.toLowerCase()];
     if (!col) return ctx.reply("Balas dengan: nama, qty, atau harga");
     state.set(id, { step: "item_value", row: s.row, col, label: text.toLowerCase() });
-    const hint = col === T.qty ? ' (contoh: 2m³)' : col === T.price ? " (contoh: 570.000)" : "";
+    const hint = col === T.qty ? ` (contoh: 2${UNIT_DEFAULT})` : col === T.price ? " (contoh: 500.000)" : "";
     return ctx.reply(`${text.toLowerCase()} barunya?${hint}`);
   }
 
@@ -452,9 +464,9 @@ bot.on("message:text", async (ctx) => {
 
   if (s.step === "item_value") {
     if (s.col === T.price && !validPrice(text))
-      return ctx.reply('Harga tidak valid, contoh: 570.000. Coba lagi atau /batal.');
+      return ctx.reply('Harga tidak valid, contoh: 500.000. Coba lagi atau /batal.');
     if (s.col === T.qty && !/^\d/.test(text))
-      return ctx.reply('Qty tidak valid, contoh: 2m³. Coba lagi atau /batal.');
+      return ctx.reply(`Qty tidak valid, contoh: 2${UNIT_DEFAULT}. Coba lagi atau /batal.`);
     state.delete(id);
     const doc = await getDoc();
     const cell = itemsTable(doc)[s.row].tableCells[s.col];
@@ -477,4 +489,4 @@ bot.on("message:photo", (ctx) =>
 // Only start polling when run directly (npx tsx bot.ts), not when imported by test.ts
 if (/(^|[\\/])bot\.(ts|js)$/.test(process.argv[1] ?? "")) bot.start();
 
-export { parse, normQty, validPrice, num, todayLine, applyMessage, getDoc, itemsTable, cellText, paraText, setDocId };
+export { parse, normQty, qtyNum, validPrice, num, todayLine, applyMessage, getDoc, itemsTable, cellText, paraText, setDocId };

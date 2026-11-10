@@ -70,6 +70,13 @@ async function main() {
     for (const [i, o] of [["2m3", "2m³"], ["2M3", "2m³"], ["2 m3", "2m³"], ["2", "2m³"], ["1.5m3", "1.5m³"], ["1m³", "1m³"]])
       assert.equal(b.normQty(i), o, `normQty(${i})`);
   });
+  await run("units and quantity parsing", () => {
+    for (const [i, o] of [["10pcs", "10pcs"], ["10 pcs", "10 pcs"], ["2 m2", "2 m2"], ["1.000", "1.000m³"]])
+      assert.equal(b.normQty(i), o, `normQty(${i})`);
+    for (const [i, o] of [["2m³", 2], ["10 pcs", 10], ["1,5m³", 1.5], ["1.5", 1.5], ["0.500", 0.5], ["1.000 pcs", 1000], ["1.000,5", 1000.5], ["", 0]] as const)
+      assert.equal(b.qtyNum(i), o, `qtyNum(${i})`);
+  });
+
   await run("price validation", () => {
     for (const ok of ["480.000", "Rp 480.000", "Rp. 480.000,-"]) assert.equal(b.validPrice(ok), true, ok);
     for (const bad of ["480rb", "abc", "0", ""]) assert.equal(b.validPrice(bad), false, bad);

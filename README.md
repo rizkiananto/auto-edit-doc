@@ -74,9 +74,13 @@ The labels and layout the bot looks for live in `config.json`, not in the code. 
 | `table`       | 0-based column positions in the items table: `no`, `name`, `qty`, `price`, `total`. |
 | `columnWords` | Words that pick a column in the guided `edit` flow. |
 | `date`        | City, timezone and month names for the auto date line (`Jakarta, 22 Mei 2026`). |
+| `unit`        | `default` is added to a bare number (`2` becomes `2m³`; set to `"pcs"` for pieces). `aliases` rewrite typed units (`m3` becomes `m³`). Other units (`10pcs`, `2 m2`) are kept as typed and still calculate. |
 | `locale`      | Number format for prices (`id-ID` gives `480.000`). |
 
-**Tip:** you can give `config.json` and the text of your doc to any AI assistant and ask it to adjust the config to match your doc's labels and table layout. Remove or replace private details (names, phone numbers, prices) before pasting.
+> [!TIP]
+> **Fastest way to set this up:** give `config.json` and the text of your doc to any AI assistant (ChatGPT, Gemini, Claude, ...) and ask it to adjust the config to match your doc's labels and table layout.
+>
+> Remove or replace private details (names, phone numbers, prices) before pasting.
 
 Use `CONFIG_PATH=/path/to/file.json` to load a different file. The bot's reply text (Indonesian) is still in `bot.ts`.
 
@@ -95,11 +99,11 @@ To : Budi Santoso
 Company : PT Maju Jaya
 
 Pasir Galunggung 02
-Price : 560.000
+Price : 500.000
 
 Tambah : Batu Kali
 Qty : 2m³
-Price : 400.000
+Price : 300.000
 
 Hapus : Batu Splir
 ```
