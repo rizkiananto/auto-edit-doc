@@ -77,6 +77,11 @@ async function main() {
       assert.equal(b.qtyNum(i), o, `qtyNum(${i})`);
   });
 
+  await run("help text is built from config", () => {
+    const h = b.helpText();
+    for (const w of ["To", "Company", "Payment Terms", "kepada", "tambah", "hapus"]) assert.ok(h.includes(w), `help mentions ${w}`);
+  });
+
   await run("price validation", () => {
     for (const ok of ["480.000", "Rp 480.000", "Rp. 480.000,-"]) assert.equal(b.validPrice(ok), true, ok);
     for (const bad of ["480rb", "abc", "0", ""]) assert.equal(b.validPrice(bad), false, bad);

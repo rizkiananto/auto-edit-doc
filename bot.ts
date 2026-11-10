@@ -405,12 +405,34 @@ bot.command("pdf", async (ctx) => {
   );
 });
 
+// Built from config.json, so it stays correct when labels/words are customised.
+function helpText() {
+  const fields = Object.entries<any>(cfg.fields)
+    .map(([k, v]) => `• ${v.label} — ketik: ${[k, ...v.aliases].join(", ")}`)
+    .join("\n");
+  const first = (c: string) => cfg.commands[c].join(" / ");
+  return (
+    "Yang bisa diedit\n\n" +
+    "Data dokumen (tulis \"kata : isi\", boleh beberapa baris atau dipisah koma):\n" + fields + "\n\n" +
+    "Item:\n" +
+    `• ${first("add")} : nama item — item baru (wajib ${first("price")}, ${first("qty")} opsional)\n` +
+    `• ${first("delete")} : nama item — hapus item\n` +
+    `• nama item, lalu ${first("price")} : ... dan/atau ${first("qty")} : ... — ubah item yang ada\n` +
+    `• ${first("total")} dihitung otomatis\n\n` +
+    `Satuan: angka saja jadi 2${UNIT_DEFAULT}; satuan lain (mis. 10pcs) ditulis apa adanya dan tetap dihitung.\n` +
+    `Tanggal: tulis seperti "${todayLine()}"` + (AUTO_DATE ? " (kalau tidak ditulis, otomatis hari ini)" : "") + ".\n\n" +
+    "Perintah: edit (mode tanya-jawab), /pdf, /batal, /start"
+  );
+}
+
+bot.command("help", (ctx) => ctx.reply(helpText()));
+
 bot.command("start", (ctx) =>
   ctx.reply(
     'Halo! Ketik "edit" untuk mulai, atau langsung tempel pesan perubahan, contoh:\n\n' +
     "To : Budi Santoso\nCompany : PT Maju Jaya\n\nPasir Galunggung 02\nPrice : 500.000\n\nJakarta, 10 April 2026\n\n" +
     "Item baru:\nTambah : Batu Kali\nQty : 2m³\nPrice : 300.000\n\nHapus item:\nHapus : Batu Splir\n\n" +
-    "/pdf untuk ambil PDF, /batal untuk membatalkan."
+    "/pdf untuk ambil PDF, /batal untuk membatalkan, /help untuk daftar yang bisa diedit."
   )
 );
 
@@ -489,4 +511,4 @@ bot.on("message:photo", (ctx) =>
 // Only start polling when run directly (npx tsx bot.ts), not when imported by test.ts
 if (/(^|[\\/])bot\.(ts|js)$/.test(process.argv[1] ?? "")) bot.start();
 
-export { parse, normQty, qtyNum, validPrice, num, todayLine, applyMessage, getDoc, itemsTable, cellText, paraText, setDocId };
+export { parse, normQty, qtyNum, helpText, validPrice, num, todayLine, applyMessage, getDoc, itemsTable, cellText, paraText, setDocId };
